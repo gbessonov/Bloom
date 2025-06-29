@@ -1,4 +1,4 @@
-package io.github.gbessonov.hashing;
+package io.github.gbessonov.bloom;
 
 public interface HashFunction {
     HashCode hash();

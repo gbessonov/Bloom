@@ -60,23 +60,24 @@ public class BasicBloomFilter<T> implements BloomFilter<T> {
     }
 
     public byte[] toBytes() throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        ObjectOutputStream oos = new ObjectOutputStream(out);
-        oos.writeObject(bits);
-        oos.flush();
-        oos.close();
-        return out.toByteArray();
+
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream(); ObjectOutputStream oos = new ObjectOutputStream(out);) {
+            oos.writeObject(bits);
+            oos.flush();
+            return out.toByteArray();
+        }
     }
 
-    public static BasicBloomFilter<?> fromBytes(byte[] data) throws IOException, ClassNotFoundException {
+    public static <T> BasicBloomFilter<T> fromBytes(byte[] data) throws IOException, ClassNotFoundException {
         if (data == null) {
             throw new IllegalArgumentException("data cannot be null");
         }
-        ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(data));
-        BitSet bitSet = (BitSet) ois.readObject();
-        var filter = new BasicBloomFilter<>();
-        filter.bits.or(bitSet);
-        return filter;
+        try (ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(data))) {
+            BitSet bitSet = (BitSet) ois.readObject();
+            var filter = new BasicBloomFilter<T>();
+            filter.bits.or(bitSet);
+            return filter;
+        }
     }
 
 }
