@@ -6,12 +6,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.nio.ByteBuffer;
 import java.util.stream.Stream;
 
 public class Murmur3fTest {
 
     private static Stream<Arguments> HashingTestDataProvider() {
+        // Tests cases are taken from guava implementation
+        // https://github.com/google/guava/blob/master/guava-tests/test/com/google/common/hash/Murmur3Hash128Test.java
         return Stream.of(
                 Arguments.of(0, 0x629942693e10f867L, 0x92db0b82baeb5347L, "hell"),
                 Arguments.of(1, 0xa78ddff5adae8d10L, 0x128900ef20900135L, "hello"),
@@ -26,12 +27,12 @@ public class Murmur3fTest {
 
     @ParameterizedTest
     @MethodSource("HashingTestDataProvider")
-    public void HashingTest(int seed, long expectedHash1, long expectedHash2, String inputString){
+    public void HashingTest(int seed, long expectedHash1, long expectedHash2, String inputString) {
         HashCode expectedHash = new Murmur3fHashCode(expectedHash1, expectedHash2);
 
-        var foo = new Murmur3f(seed);
-        foo.include(ascii(inputString));
-        var actualHash = foo.hash();
+        var actualHash = (new Murmur3f(seed))
+                .include(ascii(inputString))
+                .hash();
 
         Assertions.assertEquals(expectedHash, actualHash);
     }
