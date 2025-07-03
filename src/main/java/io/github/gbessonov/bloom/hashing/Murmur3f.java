@@ -4,58 +4,109 @@ import io.github.gbessonov.bloom.HashCode;
 import io.github.gbessonov.bloom.HashFunction;
 
 /**
- * Implementation of MurmurHash3 (x64 128-bit variant).
- * Designed for high-performance non-cryptographic hashing,
- * often used in Bloom filters and other probabilistic data structures.
+ * Fast implementation of MurmurHash3 (x64 128-bit variant),
+ * optimized for streaming usage and performance.
  */
 public class Murmur3f implements HashFunction {
 
-    // Constants defined by the MurmurHash3 algorithm
     private static final long C1 = 0x87c37b91114253d5L;
     private static final long C2 = 0x4cf5ad432745937fL;
 
-    // Internal hash state (64 bits each)
     private long h1;
     private long h2;
-
-    // Tracks total number of bytes hashed
     private int length;
 
+    // Leftover byte buffer
+    private final byte[] tailBuffer = new byte[16]; // up to 15 + 1 extra
+    private int tailLength = 0;
+
     public Murmur3f() {
-        this(0); // default seed = 0
+        this(0);
     }
 
     public Murmur3f(int seed) {
         reset(seed);
     }
 
-    /**
-     * Includes the given input into the hash computation.
-     * Can be called multiple times to hash concatenated data streams.
-     */
     @Override
     public HashFunction include(byte[] input) {
-        int i = 0;
-        int limit = input.length - 15;
+        int offset = 0;
+        int inputLength = input.length;
+        length += inputLength;
 
-        // Process full 128-bit (16-byte) blocks
-        while (i <= limit) {
-            long k1 = getLittleEndianLong(input, i);
-            long k2 = getLittleEndianLong(input, i + 8);
-            bmix64(k1, k2);
-            i += 16;
-            length += 16;
+        // Fill leftover buffer if needed
+        if (tailLength > 0) {
+            int needed = 16 - tailLength;
+            if (inputLength < needed) {
+                System.arraycopy(input, 0, tailBuffer, tailLength, inputLength);
+                tailLength += inputLength;
+                return this;
+            } else {
+                System.arraycopy(input, 0, tailBuffer, tailLength, needed);
+                bmix64(getLittleEndianLong(tailBuffer, 0), getLittleEndianLong(tailBuffer, 8));
+                offset += needed;
+                tailLength = 0;
+            }
         }
 
-        // Process remaining (non-aligned) tail bytes
-        processRemaining(input, i);
+        // Process full 16-byte blocks directly from input
+        int limit = inputLength - ((inputLength - offset) % 16);
+        while (offset < limit) {
+            long k1 = getLittleEndianLong(input, offset);
+            long k2 = getLittleEndianLong(input, offset + 8);
+            bmix64(k1, k2);
+            offset += 16;
+        }
+
+        // Store remaining tail bytes
+        tailLength = inputLength - offset;
+        if (tailLength > 0) {
+            System.arraycopy(input, offset, tailBuffer, 0, tailLength);
+        }
+
         return this;
     }
 
-    /**
-     * Reads 8 bytes from the byte array starting at the given offset
-     * and interprets them as a little-endian long.
-     */
+    @Override
+    public HashCode hash() {
+        processRemaining();
+        return prepareHashCode(h1, h2, length);
+    }
+
+    @Override
+    public void reset(int seed) {
+        this.h1 = seed;
+        this.h2 = seed;
+        this.length = 0;
+        this.tailLength = 0;
+    }
+
+    private void processRemaining() {
+        long k1 = 0, k2 = 0;
+
+        switch (tailLength) {
+            case 15: k2 ^= (tailBuffer[14] & 0xffL) << 48;
+            case 14: k2 ^= (tailBuffer[13] & 0xffL) << 40;
+            case 13: k2 ^= (tailBuffer[12] & 0xffL) << 32;
+            case 12: k2 ^= (tailBuffer[11] & 0xffL) << 24;
+            case 11: k2 ^= (tailBuffer[10] & 0xffL) << 16;
+            case 10: k2 ^= (tailBuffer[9]  & 0xffL) << 8;
+            case 9:  k2 ^= (tailBuffer[8]  & 0xffL);
+            case 8:  k1 ^= getLittleEndianLong(tailBuffer, 0); break;
+            case 7:  k1 ^= (tailBuffer[6]  & 0xffL) << 48;
+            case 6:  k1 ^= (tailBuffer[5]  & 0xffL) << 40;
+            case 5:  k1 ^= (tailBuffer[4]  & 0xffL) << 32;
+            case 4:  k1 ^= (tailBuffer[3]  & 0xffL) << 24;
+            case 3:  k1 ^= (tailBuffer[2]  & 0xffL) << 16;
+            case 2:  k1 ^= (tailBuffer[1]  & 0xffL) << 8;
+            case 1:  k1 ^= (tailBuffer[0]  & 0xffL); break;
+            case 0:  return;
+        }
+
+        h1 ^= mixK1(k1);
+        h2 ^= mixK2(k2);
+    }
+
     private static long getLittleEndianLong(byte[] data, int offset) {
         return ((long) data[offset] & 0xff) |
                 (((long) data[offset + 1] & 0xff) << 8) |
@@ -67,68 +118,6 @@ public class Murmur3f implements HashFunction {
                 (((long) data[offset + 7] & 0xff) << 56);
     }
 
-    /**
-     * Processes the final remaining bytes of the input that did not fit
-     * into a full 16-byte block. Handles 1–15 tail bytes.
-     */
-    protected void processRemaining(byte[] data, int offset) {
-        int remaining = data.length - offset;
-        length += remaining;
-
-        long k1 = 0;
-        long k2 = 0;
-
-        // Construct partial k1 and k2 values from tail bytes (little-endian)
-        switch (remaining) {
-            case 15: k2 ^= (data[offset + 14] & 0xffL) << 48;
-            case 14: k2 ^= (data[offset + 13] & 0xffL) << 40;
-            case 13: k2 ^= (data[offset + 12] & 0xffL) << 32;
-            case 12: k2 ^= (data[offset + 11] & 0xffL) << 24;
-            case 11: k2 ^= (data[offset + 10] & 0xffL) << 16;
-            case 10: k2 ^= (data[offset + 9] & 0xffL) << 8;
-            case 9:  k2 ^=  data[offset + 8] & 0xffL;
-            case 8:  k1 ^= getLittleEndianLong(data, offset); break;
-            case 7:  k1 ^= (data[offset + 6] & 0xffL) << 48;
-            case 6:  k1 ^= (data[offset + 5] & 0xffL) << 40;
-            case 5:  k1 ^= (data[offset + 4] & 0xffL) << 32;
-            case 4:  k1 ^= (data[offset + 3] & 0xffL) << 24;
-            case 3:  k1 ^= (data[offset + 2] & 0xffL) << 16;
-            case 2:  k1 ^= (data[offset + 1] & 0xffL) << 8;
-            case 1:  k1 ^=  data[offset] & 0xffL; break;
-            case 0:  break;
-            default:
-                throw new AssertionError("Unexpected tail size: " + remaining);
-        }
-
-        // Mix partial blocks into state
-        h1 ^= mixK1(k1);
-        h2 ^= mixK2(k2);
-    }
-
-    /**
-     * Finalizes the hash computation and returns the resulting 128-bit hash code.
-     */
-    @Override
-    public HashCode hash() {
-        return prepareHashCode(h1, h2, length);
-    }
-
-    /**
-     * Resets the internal state of the hash function to allow reuse.
-     *
-     * @param seed initial seed to reset the function with
-     */
-    @Override
-    public void reset(int seed) {
-        this.h1 = seed;
-        this.h2 = seed;
-        this.length = 0;
-    }
-
-    /**
-     * Mixes a 128-bit input block into the internal state.
-     * This is the core compression function of Murmur3.
-     */
     private void bmix64(long k1, long k2) {
         h1 ^= mixK1(k1);
         h1 = Long.rotateLeft(h1, 27);
@@ -141,9 +130,6 @@ public class Murmur3f implements HashFunction {
         h2 = h2 * 5 + 0x38495ab5;
     }
 
-    /**
-     * Mixes k1 input into a scrambled long as per Murmur3 spec.
-     */
     private static long mixK1(long k1) {
         k1 *= C1;
         k1 = Long.rotateLeft(k1, 31);
@@ -151,9 +137,6 @@ public class Murmur3f implements HashFunction {
         return k1;
     }
 
-    /**
-     * Mixes k2 input into a scrambled long as per Murmur3 spec.
-     */
     private static long mixK2(long k2) {
         k2 *= C2;
         k2 = Long.rotateLeft(k2, 33);
@@ -161,10 +144,6 @@ public class Murmur3f implements HashFunction {
         return k2;
     }
 
-    /**
-     * Final avalanche mixing step to finalize h1 and h2.
-     * Ensures avalanche effect and uniform distribution.
-     */
     private static long fmix64(long k) {
         k ^= k >>> 33;
         k *= 0xff51afd7ed558ccdL;
@@ -174,9 +153,6 @@ public class Murmur3f implements HashFunction {
         return k;
     }
 
-    /**
-     * Performs finalization and returns the resulting HashCode object.
-     */
     private static HashCode prepareHashCode(long h1, long h2, int length) {
         h1 ^= length;
         h2 ^= length;
