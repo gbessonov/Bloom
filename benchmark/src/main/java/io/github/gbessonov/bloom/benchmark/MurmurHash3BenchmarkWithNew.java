@@ -31,15 +31,9 @@
 
 package io.github.gbessonov.bloom.benchmark;
 
-import com.google.common.hash.Hashing;
-import io.github.gbessonov.bloom.HashCode;
 import io.github.gbessonov.bloom.hashing.Murmur3f;
 import org.greenrobot.essentials.hash.Murmur3F;
 import org.openjdk.jmh.annotations.*;
-import org.openjdk.jmh.runner.Runner;
-import org.openjdk.jmh.runner.RunnerException;
-import org.openjdk.jmh.runner.options.Options;
-import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
@@ -47,7 +41,7 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Thread)
-public class MurmurHash3Benchmark {
+public class MurmurHash3BenchmarkWithNew {
 
     private byte[] data;
 
@@ -64,24 +58,9 @@ public class MurmurHash3Benchmark {
     }
 
     @Benchmark
-    public byte[] benchmarkMurmurHash3Guava() {
-        var hasher = Hashing.murmur3_128();
-        return hasher.hashBytes(data).asBytes();
-    }
-
-    @Benchmark
     public byte[] benchmarkMurmurHash3GreenRobot() {
         var hasher = new Murmur3F();
         hasher.update(data);
         return hasher.getValueBytesLittleEndian();
-    }
-
-    public static void main(String[] args) throws RunnerException {
-        Options opt = new OptionsBuilder()
-                .include(MurmurHash3Benchmark.class.getSimpleName())
-                .forks(1)
-                .build();
-
-        new Runner(opt).run();
     }
 }

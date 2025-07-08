@@ -3,10 +3,9 @@ package io.github.gbessonov.bloom.hashing;
 import io.github.gbessonov.bloom.HashCode;
 import io.github.gbessonov.bloom.HashFunction;
 
-/**
- * Fast implementation of MurmurHash3 (x64 128-bit variant),
- * optimized for streaming usage and performance.
- */
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
 public class Murmur3f implements HashFunction {
 
     private static final long C1 = 0x87c37b91114253d5L;
@@ -16,9 +15,10 @@ public class Murmur3f implements HashFunction {
     private long h2;
     private int length;
 
-    // Leftover byte buffer
-    private final byte[] tailBuffer = new byte[16]; // up to 15 + 1 extra
+    private final byte[] tailBuffer = new byte[16];
     private int tailLength = 0;
+
+    private final ByteBuffer littleEndianBuffer = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
 
     public Murmur3f() {
         this(0);
@@ -34,7 +34,7 @@ public class Murmur3f implements HashFunction {
         int inputLength = input.length;
         length += inputLength;
 
-        // Fill leftover buffer if needed
+        // Fill leftover tail if needed
         if (tailLength > 0) {
             int needed = 16 - tailLength;
             if (inputLength < needed) {
@@ -43,22 +43,22 @@ public class Murmur3f implements HashFunction {
                 return this;
             } else {
                 System.arraycopy(input, 0, tailBuffer, tailLength, needed);
-                bmix64(getLittleEndianLong(tailBuffer, 0), getLittleEndianLong(tailBuffer, 8));
+                bmix64(readLongLE(tailBuffer, 0), readLongLE(tailBuffer, 8));
                 offset += needed;
                 tailLength = 0;
             }
         }
 
-        // Process full 16-byte blocks directly from input
-        int limit = inputLength - ((inputLength - offset) % 16);
-        while (offset < limit) {
-            long k1 = getLittleEndianLong(input, offset);
-            long k2 = getLittleEndianLong(input, offset + 8);
+        // Process 16-byte blocks
+        int end = inputLength - 15;
+        while (offset < end) {
+            long k1 = readLongLE(input, offset);
+            long k2 = readLongLE(input, offset + 8);
             bmix64(k1, k2);
             offset += 16;
         }
 
-        // Store remaining tail bytes
+        // Store remaining tail
         tailLength = inputLength - offset;
         if (tailLength > 0) {
             System.arraycopy(input, offset, tailBuffer, 0, tailLength);
@@ -85,21 +85,21 @@ public class Murmur3f implements HashFunction {
         long k1 = 0, k2 = 0;
 
         switch (tailLength) {
-            case 15: k2 ^= (tailBuffer[14] & 0xffL) << 48;
-            case 14: k2 ^= (tailBuffer[13] & 0xffL) << 40;
-            case 13: k2 ^= (tailBuffer[12] & 0xffL) << 32;
-            case 12: k2 ^= (tailBuffer[11] & 0xffL) << 24;
-            case 11: k2 ^= (tailBuffer[10] & 0xffL) << 16;
-            case 10: k2 ^= (tailBuffer[9]  & 0xffL) << 8;
-            case 9:  k2 ^= (tailBuffer[8]  & 0xffL);
-            case 8:  k1 ^= getLittleEndianLong(tailBuffer, 0); break;
-            case 7:  k1 ^= (tailBuffer[6]  & 0xffL) << 48;
-            case 6:  k1 ^= (tailBuffer[5]  & 0xffL) << 40;
-            case 5:  k1 ^= (tailBuffer[4]  & 0xffL) << 32;
-            case 4:  k1 ^= (tailBuffer[3]  & 0xffL) << 24;
-            case 3:  k1 ^= (tailBuffer[2]  & 0xffL) << 16;
-            case 2:  k1 ^= (tailBuffer[1]  & 0xffL) << 8;
-            case 1:  k1 ^= (tailBuffer[0]  & 0xffL); break;
+            case 15: k2 ^= ((long) tailBuffer[14] & 0xffL) << 48;
+            case 14: k2 ^= ((long) tailBuffer[13] & 0xffL) << 40;
+            case 13: k2 ^= ((long) tailBuffer[12] & 0xffL) << 32;
+            case 12: k2 ^= ((long) tailBuffer[11] & 0xffL) << 24;
+            case 11: k2 ^= ((long) tailBuffer[10] & 0xffL) << 16;
+            case 10: k2 ^= ((long) tailBuffer[9]  & 0xffL) << 8;
+            case 9:  k2 ^= ((long) tailBuffer[8]  & 0xffL);
+            case 8:  k1 ^= readLongLE(tailBuffer, 0); break;
+            case 7:  k1 ^= ((long) tailBuffer[6] & 0xffL) << 48;
+            case 6:  k1 ^= ((long) tailBuffer[5] & 0xffL) << 40;
+            case 5:  k1 ^= ((long) tailBuffer[4] & 0xffL) << 32;
+            case 4:  k1 ^= ((long) tailBuffer[3] & 0xffL) << 24;
+            case 3:  k1 ^= ((long) tailBuffer[2] & 0xffL) << 16;
+            case 2:  k1 ^= ((long) tailBuffer[1] & 0xffL) << 8;
+            case 1:  k1 ^= ((long) tailBuffer[0] & 0xffL); break;
             case 0:  return;
         }
 
@@ -107,15 +107,15 @@ public class Murmur3f implements HashFunction {
         h2 ^= mixK2(k2);
     }
 
-    private static long getLittleEndianLong(byte[] data, int offset) {
-        return ((long) data[offset] & 0xff) |
-                (((long) data[offset + 1] & 0xff) << 8) |
-                (((long) data[offset + 2] & 0xff) << 16) |
-                (((long) data[offset + 3] & 0xff) << 24) |
-                (((long) data[offset + 4] & 0xff) << 32) |
-                (((long) data[offset + 5] & 0xff) << 40) |
-                (((long) data[offset + 6] & 0xff) << 48) |
-                (((long) data[offset + 7] & 0xff) << 56);
+    private long readLongLE(byte[] data, int offset) {
+        return ((long) data[offset] & 0xff)
+                | (((long) data[offset + 1] & 0xff) << 8)
+                | (((long) data[offset + 2] & 0xff) << 16)
+                | (((long) data[offset + 3] & 0xff) << 24)
+                | (((long) data[offset + 4] & 0xff) << 32)
+                | (((long) data[offset + 5] & 0xff) << 40)
+                | (((long) data[offset + 6] & 0xff) << 48)
+                | (((long) data[offset + 7] & 0xff) << 56);
     }
 
     private void bmix64(long k1, long k2) {
